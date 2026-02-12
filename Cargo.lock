@@ -56,7 +56,7 @@ checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 [[package]]
 name = "rlrl"
 version = "0.1.0"
-source = "git+http://github.com/finleyowen/rlrl.git#51b8363558b2c12581ea66755e8618742ae032e6"
+source = "git+https://www.github.com/finleyowen/rlrl.git#51b8363558b2c12581ea66755e8618742ae032e6"
 dependencies = [
  "regex",
 ]

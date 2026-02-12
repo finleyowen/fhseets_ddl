@@ -11,13 +11,16 @@ pub enum Token {
     CParen,
     OAngle,
     CAngle,
+    Colon,
+    Semicolon,
     Comma,
     Equals,
     QMark,
 
     // kwds
     TypeKwd,
-    FnKwd,
+    TableKwd,
+    SchemaKwd,
 
     // ident
     Ident(String),
@@ -30,19 +33,20 @@ pub enum Token {
 
 impl Token {
     // helper function for handling identifiers
-    fn is_ident_tok(&self) -> bool {
-        if let Self::Ident(_) = self {
-            return true;
+    fn is_ident_or_str_literal_tok(&self) -> bool {
+        match self {
+            Self::Ident(_) | Self::StrLiteral(_) => true,
+            _ => false,
         }
-        false
     }
 
     // helper function for handling identifiers
-    fn get_ident(&self) -> Result<&String, ParseError> {
-        if let Self::Ident(ident) = self {
-            return Ok(ident);
+    fn get_ident_or_str_literal(&self) -> Option<String> {
+        match &self {
+            Self::Ident(ident) => Some(ident.clone()),
+            Self::StrLiteral(strlit) => Some(strlit.clone()),
+            _ => None,
         }
-        Err(ParseError::new(""))
     }
 
     fn is_int_literal_tok(&self) -> bool {
@@ -87,13 +91,15 @@ fn setup_lexer() -> Lexer<Token> {
     lexer.add_rule(r"\)", |_| LexResult::Token(Token::CParen));
     lexer.add_rule(r"<", |_| LexResult::Token(Token::OAngle));
     lexer.add_rule(r">", |_| LexResult::Token(Token::CAngle));
+    lexer.add_rule(r":", |_| LexResult::Token(Token::Colon));
+    lexer.add_rule(r";", |_| LexResult::Token(Token::Semicolon));
     lexer.add_rule(r"\,", |_| LexResult::Token(Token::Comma));
     lexer.add_rule(r"=", |_| LexResult::Token(Token::Equals));
     lexer.add_rule(r"\?", |_| LexResult::Token(Token::QMark));
 
     // kwds
     lexer.add_rule(r"type", |_| LexResult::Token(Token::TypeKwd));
-    lexer.add_rule(r"fn", |_| LexResult::Token(Token::FnKwd));
+    lexer.add_rule(r"table", |_| LexResult::Token(Token::TableKwd));
 
     // idents
     lexer.add_rule(r"[a-zA-Z][a-zA-Z0-9_]*", |re_match| {
@@ -114,9 +120,7 @@ fn setup_lexer() -> Lexer<Token> {
         }
     });
     lexer.add_rule("\"[^\"]*\"", |re_match| {
-        LexResult::Token(Token::StrLiteral(
-            re_match.as_str().trim_matches('"').into(),
-        ))
+        LexResult::Token(Token::StrLiteral(re_match.as_str().into()))
     });
 
     lexer.add_rule(".", |re_match| {
@@ -185,7 +189,7 @@ pub fn parse_int_range(
 
     tq.consume_eq(Token::CAngle)?;
 
-    Ok((IntRange { min, max }, 0))
+    Ok((IntRange { min, max }, tq.get_idx()))
 }
 
 /// Type alias over a `Range<T> where T = f64`
@@ -287,41 +291,75 @@ pub fn parse_data_type(
     let mut tq = tq.clone();
 
     let parent_name = tq
-        .consume_matching(|tok| tok.is_ident_tok())?
-        .get_ident()?
+        .consume_matching(|tok| tok.is_ident_or_str_literal_tok())?
+        .get_ident_or_str_literal()
+        .ok_or::<Box<dyn Error>>("Couldn't parse base type name!".into())?
         .clone();
 
     let nullable = tq.consume_eq(Token::QMark).is_ok();
 
     match parent_name.to_lowercase().as_str() {
         "int" | "integer" => {
-            let (range, end) = parse_int_range(&tq)?;
+            if let Ok((range, end)) = parse_int_range(&tq) {
+                return Ok((
+                    DType {
+                        nullable,
+                        parent: ParentType::Int(range),
+                    },
+                    end,
+                ));
+            }
             return Ok((
                 DType {
                     nullable,
-                    parent: ParentType::Int(range),
+                    parent: ParentType::Int(Range {
+                        min: None,
+                        max: None,
+                    }),
                 },
-                end,
+                tq.get_idx(),
             ));
         }
         "str" | "string" | "text" => {
-            let (range, end) = parse_int_range(&tq)?;
+            if let Ok((range, end)) = parse_int_range(&tq) {
+                return Ok((
+                    DType {
+                        nullable,
+                        parent: ParentType::Str(range),
+                    },
+                    end,
+                ));
+            }
             return Ok((
                 DType {
                     nullable,
-                    parent: ParentType::Str(range),
+                    parent: ParentType::Str(Range {
+                        min: None,
+                        max: None,
+                    }),
                 },
-                end,
+                tq.get_idx(),
             ));
         }
         "dbl" | "double" | "float" => {
-            let (range, end) = parse_dbl_range(&tq)?;
+            if let Ok((range, end)) = parse_dbl_range(&tq) {
+                return Ok((
+                    DType {
+                        nullable,
+                        parent: ParentType::Dbl(range),
+                    },
+                    end,
+                ));
+            }
             return Ok((
                 DType {
                     nullable,
-                    parent: ParentType::Dbl(range),
+                    parent: ParentType::Dbl(Range {
+                        min: None,
+                        max: None,
+                    }),
                 },
-                end,
+                tq.get_idx(),
             ));
         }
         _ => {
@@ -335,44 +373,126 @@ pub fn parse_data_type(
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Stmt {
-    TypeDef(String, DType),
+pub struct ColumnSchema {
+    column_name: String,
+    dtype: DType,
 }
 
-pub fn parse_stmt(
+impl Display for ColumnSchema {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.column_name, self.dtype)
+    }
+}
+
+pub fn parse_column_schema(
     tq: &TokenQueue<Token>,
-) -> Result<(Stmt, usize), Box<dyn Error>> {
+) -> Result<(ColumnSchema, usize), Box<dyn Error>> {
+    let mut tq: TokenQueue<Token> = tq.clone();
+
+    let column_name = tq
+        .consume_matching(|tok| tok.is_ident_or_str_literal_tok())?
+        .get_ident_or_str_literal()
+        .ok_or::<Box<dyn Error>>("Couldn't get column name!".into())?
+        .clone();
+
+    tq.consume_eq(Token::Colon)?;
+
+    let dtype = tq.parse(parse_data_type)?;
+
+    Ok((ColumnSchema { column_name, dtype }, tq.get_idx()))
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TableSchema {
+    table_name: String,
+    columns: Vec<ColumnSchema>,
+}
+
+pub fn parse_table_schema(tq: &TokenQueue<Token>) -> ParseResult<TableSchema> {
+    let mut tq = tq.clone();
+
+    let table_name = tq
+        .consume_matching(|tok| tok.is_ident_or_str_literal_tok())?
+        .get_ident_or_str_literal()
+        .ok_or("Couldn't get table name!")?;
+
+    tq.consume_eq(Token::OParen)?;
+
+    let mut columns = vec![];
+
+    while let Ok(column) = tq.parse(parse_column_schema) {
+        columns.push(column);
+        if tq.consume_eq(Token::Comma).is_err() {
+            break;
+        }
+    }
+
+    tq.consume_eq(Token::CParen)?;
+    Ok((
+        TableSchema {
+            table_name,
+            columns,
+        },
+        tq.get_idx(),
+    ))
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Stmt {
+    DType(String, DType),
+    Table(TableSchema),
+}
+
+pub fn parse_stmt(tq: &TokenQueue<Token>) -> ParseResult<Stmt> {
     let mut tq = tq.clone();
 
     match tq.consume() {
         Ok(Token::TypeKwd) => {
-            // dbg!("consumed type keyword");
-
             let type_name = tq
-                .consume_matching(|tok| tok.is_ident_tok())?
-                .get_ident()?
+                .consume_matching(|tok| tok.is_ident_or_str_literal_tok())?
+                .get_ident_or_str_literal()
+                .ok_or::<Box<dyn Error>>("Couldn't get type name!".into())?
                 .clone();
 
-            // dbg!(&type_name);
-
             let (dtype, end) = parse_data_type(&tq)?;
-            Ok((Stmt::TypeDef(type_name.into(), dtype), end))
+            // tq.consume_eq(Token::)
+            Ok((Stmt::DType(type_name.into(), dtype), end))
         }
-        Ok(_) => {
-            // dbg!(tok);
-            Err("Couldn't parse statement!".into())
+        Ok(Token::TableKwd) => {
+            let (table_schema, end) = parse_table_schema(&tq)?;
+            Ok((Stmt::Table(table_schema), end))
         }
-        Err(_) => {
-            // dbg!(err);
-            Err("Couldn't parse statement!".into())
+        Ok(tok) => {
+            dbg!(tok);
+            Err(format!("Couldn't parse statement!").into())
+        }
+        Err(_) => Err("Couldn't parse statement!".into()),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Prgm {
+    stmts: Vec<Stmt>,
+}
+
+pub fn parse_prgm(tq: &TokenQueue<Token>) -> ParseResult<Prgm> {
+    let mut tq = tq.clone();
+    let mut stmts = vec![];
+
+    while let Ok((stmt, end)) = parse_stmt(&tq) {
+        tq.go_to(end);
+        stmts.push(stmt);
+        if tq.consume_eq(Token::Semicolon).is_err() {
+            return Err("Missing semicolon!".into());
         }
     }
+
+    Ok((Prgm { stmts }, tq.get_idx()))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use rlrl::parse::TokenQueue;
     use std::error::Error;
 
     fn lex(s: &str) -> Result<TokenQueue<Token>, Box<dyn Error>> {
@@ -393,6 +513,11 @@ mod tests {
 
     fn maps_to_data_type(s: &str) -> Result<bool, Box<dyn Error>> {
         let out = parse_data_type(&lex(&s)?)?.0.to_string();
+        Ok(out == s)
+    }
+
+    fn maps_to_column_schema(s: &str) -> Result<bool, Box<dyn Error>> {
+        let out = parse_column_schema(&lex(&s)?)?.0.to_string();
         Ok(out == s)
     }
 
@@ -420,6 +545,17 @@ mod tests {
     fn data_type_test() -> Result<(), Box<dyn Error>> {
         assert!(maps_to_data_type("int?<5,10>")?);
         assert!(maps_to_data_type("int<5,10>")?);
+        assert!(maps_to_data_type("str<5,10>")?);
+        assert!(maps_to_data_type("str?<5,10>")?);
+        assert!(maps_to_data_type("dbl?<5.4,10.3>")?);
+        assert!(maps_to_data_type("dbl<5,10>")?);
+        Ok(())
+    }
+
+    #[test]
+    fn column_schema_test() -> Result<(), Box<dyn Error>> {
+        assert!(maps_to_column_schema("abc: int<5,5>")?);
+        assert!(maps_to_column_schema("\"My column\": int<5,5>")?);
 
         Ok(())
     }
@@ -430,7 +566,7 @@ mod tests {
         let (stmt, _) = parse_stmt(&TokenQueue::new(tokens))?;
 
         assert!(
-            stmt == Stmt::TypeDef(
+            stmt == Stmt::DType(
                 "i1to5".into(),
                 DType {
                     parent: ParentType::Int(Range {
@@ -441,6 +577,108 @@ mod tests {
                 }
             )
         );
+
+        let tokens = setup_lexer().lex("table Table1(a:int,b:dbl,c:str)")?;
+        let (_, _) = parse_stmt(&TokenQueue::new(tokens))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn ident_test() -> Result<(), Box<dyn Error>> {
+        let ident = "helloWorld";
+        let str_lit = "\"helloWorld\"";
+
+        let ident_tok = Token::Ident(ident.into());
+        let str_lit_tok = Token::StrLiteral(str_lit.into());
+        assert!(
+            ident_tok.is_ident_or_str_literal_tok()
+                && ident_tok
+                    .get_ident_or_str_literal()
+                    .ok_or::<Box<dyn Error>>("ident".into())?
+                    == ident,
+        );
+        assert!(
+            str_lit_tok.is_ident_or_str_literal_tok()
+                && str_lit_tok
+                    .get_ident_or_str_literal()
+                    .ok_or::<Box<dyn Error>>("ident".into())?
+                    == str_lit,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn table_schema_test() -> Result<(), Box<dyn Error>> {
+        let mut tq = lex("Table(
+            col1: int<1, 5>, 
+            col2: dbl<1, 5>, 
+            col3: str<5, 10>,
+            col4: int?<1, 6>
+        )")?;
+
+        let table = tq.parse(parse_table_schema)?;
+
+        assert!(
+            table
+                == TableSchema {
+                    table_name: "Table".into(),
+                    columns: vec![
+                        ColumnSchema {
+                            column_name: "col1".into(),
+                            dtype: DType {
+                                parent: ParentType::Int(Range {
+                                    min: Some(1),
+                                    max: Some(5)
+                                }),
+                                nullable: false
+                            }
+                        },
+                        ColumnSchema {
+                            column_name: "col2".into(),
+                            dtype: DType {
+                                parent: ParentType::Dbl(Range {
+                                    min: Some(1.0),
+                                    max: Some(5.0)
+                                }),
+                                nullable: false
+                            }
+                        },
+                        ColumnSchema {
+                            column_name: "col3".into(),
+                            dtype: DType {
+                                parent: ParentType::Str(Range {
+                                    min: Some(5),
+                                    max: Some(10)
+                                }),
+                                nullable: false
+                            }
+                        },
+                        ColumnSchema {
+                            column_name: "col4".into(),
+                            dtype: DType {
+                                parent: ParentType::Int(Range {
+                                    min: Some(1),
+                                    max: Some(6)
+                                }),
+                                nullable: true
+                            }
+                        }
+                    ]
+                }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_prgm_test() -> Result<(), Box<dyn Error>> {
+        let tq = lex("
+        table Table1(a: int, b: dbl, c: str, d: int?);
+        table Table2(a: int, b: dbl, c: str, d: int?);
+        ")?;
+
+        parse_prgm(&tq)?;
 
         Ok(())
     }

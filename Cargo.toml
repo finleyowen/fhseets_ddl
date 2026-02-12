@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rlrl = { git = "http://github.com/finleyowen/rlrl.git", version = "0.1.0" }
+rlrl = { git = "https://www.github.com/finleyowen/rlrl.git", version = "0.1.0" }
