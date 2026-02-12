@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
 use rlrl::prelude::*;
-use std::fmt::Display;
+use std::{error::Error, fmt::Display};
 
 /// Enum representing the tokens available to the lexer.
 #[derive(PartialEq, Debug)]
-enum Token {
+pub enum Token {
     // chars
     OParen,
     CParen,
@@ -151,49 +151,41 @@ impl<T: Display> Display for Range<T> {
 
 /// Type alias over a `Range<T> where T = i32`
 ///
-/// Offers syntactic convenience when parsing - allows use of
-/// `IntRange::try_from(&tq)` rather than `Range::<i32>::try_from(&tq)`
 type IntRange = Range<i32>;
 
-impl TryFrom<&TokenQueue<Token>> for IntRange {
-    type Error = ParseError;
+pub fn parse_int_range(
+    tq: &TokenQueue<Token>,
+) -> Result<(IntRange, usize), Box<dyn Error>> {
+    // create a mutable copy
+    let mut tq = tq.clone();
 
-    fn try_from(value: &TokenQueue<Token>) -> Result<Self, Self::Error> {
-        // create a mutable copy
-        let mut tq = value.clone();
+    tq.consume_eq(Token::OAngle)?;
 
-        tq.consume_eq(Token::OAngle)?;
+    // clone to avoid mixing mutable and immutable borrows - note cloning
+    // tq is cheap
+    let min = match tq.clone().peek_matching(|token| token.is_int_literal_tok())
+    {
+        Ok(token) => {
+            tq.increment();
+            Some(token.get_int_literal()?)
+        }
+        Err(_) => None,
+    };
 
-        // clone to avoid mixing mutable and immutable borrows - note cloning
-        // tq is cheap
-        let min = match tq
-            .clone()
-            .peek_matching(|token| token.is_int_literal_tok())
-        {
-            Ok(token) => {
-                tq.increment();
-                Some(token.get_int_literal()?)
-            }
-            Err(_) => None,
-        };
+    tq.consume_eq(Token::Comma)?;
 
-        tq.consume_eq(Token::Comma)?;
+    let max = match tq.clone().peek_matching(|token| token.is_int_literal_tok())
+    {
+        Ok(token) => {
+            tq.increment();
+            Some(token.get_int_literal()?)
+        }
+        Err(_) => None,
+    };
 
-        let max = match tq
-            .clone()
-            .peek_matching(|token| token.is_int_literal_tok())
-        {
-            Ok(token) => {
-                tq.increment();
-                Some(token.get_int_literal()?)
-            }
-            Err(_) => None,
-        };
+    tq.consume_eq(Token::CAngle)?;
 
-        tq.consume_eq(Token::CAngle)?;
-
-        Ok(Self { min, max })
-    }
+    Ok((IntRange { min, max }, 0))
 }
 
 /// Type alias over a `Range<T> where T = f64`
@@ -202,50 +194,49 @@ impl TryFrom<&TokenQueue<Token>> for IntRange {
 /// `DblRange::try_from(&tq)` rather than `Range::<f64>::try_from(&tq)`
 type DblRange = Range<f64>;
 
-impl TryFrom<&TokenQueue<Token>> for DblRange {
-    type Error = ParseError;
+pub fn parse_dbl_range(
+    tq: &TokenQueue<Token>,
+) -> Result<(DblRange, usize), Box<dyn Error>> {
+    let mut tq = tq.clone();
 
-    fn try_from(value: &TokenQueue<Token>) -> Result<Self, Self::Error> {
-        let mut tq = value.clone();
+    // consume '<'
+    tq.consume_eq(Token::OAngle)?;
 
-        // consume '<'
-        tq.consume_eq(Token::OAngle)?;
+    // consume min
+    let min = match tq.clone().peek_matching(|token| {
+        token.is_double_literal_tok() || token.is_int_literal_tok()
+    }) {
+        Ok(token) => {
+            tq.increment();
+            Some(token.get_double_literal()?)
+        }
+        Err(_) => None,
+    };
 
-        // consume min
-        let min = match tq.clone().peek_matching(|token| {
-            token.is_double_literal_tok() || token.is_int_literal_tok()
-        }) {
-            Ok(token) => {
-                tq.increment();
-                Some(token.get_double_literal()?)
-            }
-            Err(_) => None,
-        };
+    // consume ','
+    tq.consume_eq(Token::Comma)?;
 
-        // consume ','
-        tq.consume_eq(Token::Comma)?;
+    // consume max
+    let max = match tq
+        .clone()
+        .peek_matching(|token| token.is_double_literal_tok())
+    {
+        Ok(token) => {
+            tq.increment();
+            Some(token.get_double_literal()?)
+        }
+        Err(_) => None,
+    };
 
-        // consume max
-        let max = match tq
-            .clone()
-            .peek_matching(|token| token.is_double_literal_tok())
-        {
-            Ok(token) => {
-                tq.increment();
-                Some(token.get_double_literal()?)
-            }
-            Err(_) => None,
-        };
+    // consume '>'
+    tq.consume_eq(Token::CAngle)?;
 
-        // consume '>'
-        tq.consume_eq(Token::CAngle)?;
-
-        // done
-        Ok(Self { min, max })
-    }
+    // done
+    Ok((DblRange { min, max }, tq.get_idx()))
 }
 
 /// The basic types available in the application.
+#[derive(Debug, PartialEq)]
 pub enum ParentType {
     Int(IntRange),
     Str(IntRange),
@@ -253,12 +244,13 @@ pub enum ParentType {
 }
 
 /// Derived data types in the applicaiton.
-pub struct DataType {
+#[derive(Debug, PartialEq)]
+pub struct DType {
     parent: ParentType,
     nullable: bool,
 }
 
-impl Display for DataType {
+impl Display for DType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.parent {
             ParentType::Int(range) => {
@@ -289,49 +281,97 @@ impl Display for DataType {
     }
 }
 
-impl TryFrom<&TokenQueue<Token>> for DataType {
-    type Error = ParseError;
+pub fn parse_data_type(
+    tq: &TokenQueue<Token>,
+) -> Result<(DType, usize), Box<dyn Error>> {
+    let mut tq = tq.clone();
 
-    fn try_from(value: &TokenQueue<Token>) -> Result<Self, Self::Error> {
-        let mut tq = value.clone();
+    let parent_name = tq
+        .consume_matching(|tok| tok.is_ident_tok())?
+        .get_ident()?
+        .clone();
 
-        let parent_name = tq
-            .consume_matching(|tok| tok.is_ident_tok())?
-            .get_ident()?
-            .clone();
+    let nullable = tq.consume_eq(Token::QMark).is_ok();
 
-        let nullable = tq.consume_eq(Token::QMark).is_ok();
-
-        match parent_name.to_lowercase().as_str() {
-            "int" | "integer" => {
-                let range = IntRange::try_from(&tq)?;
-                return Ok(DataType {
+    match parent_name.to_lowercase().as_str() {
+        "int" | "integer" => {
+            let (range, end) = parse_int_range(&tq)?;
+            return Ok((
+                DType {
                     nullable,
                     parent: ParentType::Int(range),
-                });
-            }
-            "str" | "string" | "text" => {
-                let range = IntRange::try_from(&tq)?;
-                return Ok(DataType {
+                },
+                end,
+            ));
+        }
+        "str" | "string" | "text" => {
+            let (range, end) = parse_int_range(&tq)?;
+            return Ok((
+                DType {
                     nullable,
                     parent: ParentType::Str(range),
-                });
-            }
-            "dbl" | "double" | "float" => {
-                let range = DblRange::try_from(&tq)?;
-                return Ok(DataType {
+                },
+                end,
+            ));
+        }
+        "dbl" | "double" | "float" => {
+            let (range, end) = parse_dbl_range(&tq)?;
+            return Ok((
+                DType {
                     nullable,
                     parent: ParentType::Dbl(range),
-                });
-            }
-            _ => return Err(ParseError::new("Couldn't parse data type!")),
+                },
+                end,
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "Couldn't parse data type from '{}'!",
+                parent_name
+            )
+            .into());
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Stmt {
+    TypeDef(String, DType),
+}
+
+pub fn parse_stmt(
+    tq: &TokenQueue<Token>,
+) -> Result<(Stmt, usize), Box<dyn Error>> {
+    let mut tq = tq.clone();
+
+    match tq.consume() {
+        Ok(Token::TypeKwd) => {
+            // dbg!("consumed type keyword");
+
+            let type_name = tq
+                .consume_matching(|tok| tok.is_ident_tok())?
+                .get_ident()?
+                .clone();
+
+            // dbg!(&type_name);
+
+            let (dtype, end) = parse_data_type(&tq)?;
+            Ok((Stmt::TypeDef(type_name.into(), dtype), end))
+        }
+        Ok(_) => {
+            // dbg!(tok);
+            Err("Couldn't parse statement!".into())
+        }
+        Err(_) => {
+            // dbg!(err);
+            Err("Couldn't parse statement!".into())
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{DataType, DblRange, IntRange, Token, setup_lexer};
+    use crate::*;
     use rlrl::parse::TokenQueue;
     use std::error::Error;
 
@@ -342,17 +382,17 @@ mod tests {
     }
 
     fn maps_to_int_range(s: &str) -> Result<bool, Box<dyn Error>> {
-        let out = IntRange::try_from(&lex(s)?)?.to_string();
+        let out = parse_int_range(&lex(&s)?)?.0.to_string();
         Ok(out == s)
     }
 
     fn maps_to_dbl_range(s: &str) -> Result<bool, Box<dyn Error>> {
-        let out = DblRange::try_from(&lex(s)?)?.to_string();
+        let out = parse_dbl_range(&lex(&s)?)?.0.to_string();
         Ok(out == s)
     }
 
     fn maps_to_data_type(s: &str) -> Result<bool, Box<dyn Error>> {
-        let out = DataType::try_from(&lex(s)?)?.to_string();
+        let out = parse_data_type(&lex(&s)?)?.0.to_string();
         Ok(out == s)
     }
 
@@ -380,6 +420,27 @@ mod tests {
     fn data_type_test() -> Result<(), Box<dyn Error>> {
         assert!(maps_to_data_type("int?<5,10>")?);
         assert!(maps_to_data_type("int<5,10>")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn stmt_test() -> Result<(), Box<dyn Error>> {
+        let tokens = setup_lexer().lex("type i1to5 int<1,5>")?;
+        let (stmt, _) = parse_stmt(&TokenQueue::new(tokens))?;
+
+        assert!(
+            stmt == Stmt::TypeDef(
+                "i1to5".into(),
+                DType {
+                    parent: ParentType::Int(Range {
+                        min: Some(1),
+                        max: Some(5)
+                    }),
+                    nullable: false
+                }
+            )
+        );
 
         Ok(())
     }
