@@ -3,6 +3,68 @@
 use rlrl::prelude::*;
 use std::{error::Error, fmt::Display};
 
+#[derive(PartialEq, Debug, Clone)]
+pub enum Literal {
+    Int(i32),
+    Dbl(f64),
+    Str(String),
+}
+
+impl Literal {
+    pub fn is_str_literal(&self) -> bool {
+        match self {
+            Self::Str(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_str(&self) -> Option<&String> {
+        match self {
+            Self::Str(val) => Some(val),
+            _ => None,
+        }
+    }
+
+    pub fn is_int_literal(&self) -> bool {
+        match self {
+            Self::Int(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_int(&self) -> Option<i32> {
+        match self {
+            Self::Int(val) => Some(val.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn is_dbl_literal(&self) -> bool {
+        match self {
+            Self::Dbl(_) | Self::Int(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn get_dbl(&self) -> Option<f64> {
+        match self {
+            Self::Dbl(val) => Some(val.clone()),
+            Self::Int(val) => Some(*val as f64),
+            _ => None,
+        }
+    }
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(val) => write!(f, "{}", val),
+            Self::Dbl(val) => write!(f, "{}", val),
+            Self::Str(val) => write!(f, "{}", val),
+        }
+    }
+}
+
 /// Enum representing the tokens available to the lexer.
 #[derive(PartialEq, Debug)]
 pub enum Token {
@@ -26,57 +88,40 @@ pub enum Token {
     Ident(String),
 
     // literals
-    IntLiteral(i32),
-    DblLiteral(f64),
-    StrLiteral(String),
+    Literal(Literal),
 }
 
 impl Token {
     // helper function for handling identifiers
     fn is_ident_or_str_literal_tok(&self) -> bool {
         match self {
-            Self::Ident(_) | Self::StrLiteral(_) => true,
+            Self::Ident(_) => true,
+            Self::Literal(literal) => literal.is_str_literal(),
             _ => false,
         }
     }
 
     // helper function for handling identifiers
-    fn get_ident_or_str_literal(&self) -> Option<String> {
+    fn get_ident_or_str_literal(&self) -> Option<&String> {
         match &self {
-            Self::Ident(ident) => Some(ident.clone()),
-            Self::StrLiteral(strlit) => Some(strlit.clone()),
+            Self::Ident(ident) => Some(ident),
+            Self::Literal(literal) => literal.get_str(),
             _ => None,
         }
     }
 
-    fn is_int_literal_tok(&self) -> bool {
-        if let Self::IntLiteral(_) = self {
-            return true;
+    fn is_literal(&self) -> bool {
+        match &self {
+            Self::Literal(_) => true,
+            _ => false,
         }
-        false
     }
 
-    fn get_int_literal(&self) -> Result<i32, ParseError> {
-        if let Self::IntLiteral(val) = self {
-            return Ok(*val);
+    fn get_literal(&self) -> Option<&Literal> {
+        match &self {
+            Self::Literal(literal) => Some(literal),
+            _ => None,
         }
-        Err(ParseError::new(""))
-    }
-
-    fn is_double_literal_tok(&self) -> bool {
-        if let Self::DblLiteral(_) | Self::IntLiteral(_) = self {
-            return true;
-        }
-        false
-    }
-
-    fn get_double_literal(&self) -> Result<f64, ParseError> {
-        if let Self::DblLiteral(val) = self {
-            return Ok(*val);
-        } else if let Self::IntLiteral(val) = self {
-            return Ok(*val as f64);
-        }
-        Err(ParseError::new(""))
     }
 }
 
@@ -109,18 +154,18 @@ fn setup_lexer() -> Lexer<Token> {
     // literals
     lexer.add_rule(r"\-?[0-9]+", |re_match| {
         match re_match.as_str().parse::<i32>() {
-            Ok(v) => LexResult::Token(Token::IntLiteral(v)),
+            Ok(v) => LexResult::Token(Token::Literal(Literal::Int(v))),
             Err(e) => LexResult::Error(e.into()),
         }
     });
     lexer.add_rule(r"\-?[0-9]+(\.[0-9]+)?", |re_match| {
         match re_match.as_str().parse::<f64>() {
-            Ok(v) => LexResult::Token(Token::DblLiteral(v)),
+            Ok(v) => LexResult::Token(Token::Literal(Literal::Dbl(v))),
             Err(e) => LexResult::Error(e.into()),
         }
     });
     lexer.add_rule("\"[^\"]*\"", |re_match| {
-        LexResult::Token(Token::StrLiteral(re_match.as_str().into()))
+        LexResult::Token(Token::Literal(Literal::Str(re_match.as_str().into())))
     });
 
     lexer.add_rule(".", |re_match| {
@@ -154,7 +199,6 @@ impl<T: Display> Display for Range<T> {
 }
 
 /// Type alias over a `Range<T> where T = i32`
-///
 type IntRange = Range<i32>;
 
 pub fn parse_int_range(
@@ -165,24 +209,32 @@ pub fn parse_int_range(
 
     tq.consume_eq(Token::OAngle)?;
 
-    // clone to avoid mixing mutable and immutable borrows - note cloning
-    // tq is cheap
-    let min = match tq.clone().peek_matching(|token| token.is_int_literal_tok())
-    {
+    // consume min
+    let min = match tq.clone().peek_matching(|token| token.is_literal()) {
         Ok(token) => {
             tq.increment();
-            Some(token.get_int_literal()?)
+            let literal = token.get_literal().unwrap();
+            if literal.is_int_literal() {
+                Some(literal.get_int().unwrap())
+            } else {
+                return Err("Couldn't parse int literal!".into());
+            }
         }
         Err(_) => None,
     };
 
     tq.consume_eq(Token::Comma)?;
 
-    let max = match tq.clone().peek_matching(|token| token.is_int_literal_tok())
-    {
+    // consume max
+    let max = match tq.clone().peek_matching(|token| token.is_literal()) {
         Ok(token) => {
             tq.increment();
-            Some(token.get_int_literal()?)
+            let literal = token.get_literal().unwrap();
+            if literal.is_int_literal() {
+                Some(literal.get_int().unwrap())
+            } else {
+                return Err("Couldn't parse int literal!".into());
+            }
         }
         Err(_) => None,
     };
@@ -207,12 +259,15 @@ pub fn parse_dbl_range(
     tq.consume_eq(Token::OAngle)?;
 
     // consume min
-    let min = match tq.clone().peek_matching(|token| {
-        token.is_double_literal_tok() || token.is_int_literal_tok()
-    }) {
+    let min = match tq.clone().peek_matching(|token| token.is_literal()) {
         Ok(token) => {
             tq.increment();
-            Some(token.get_double_literal()?)
+            let literal = token.get_literal().unwrap();
+            if literal.is_dbl_literal() {
+                Some(literal.get_dbl().unwrap())
+            } else {
+                return Err("Couldn't parse dbl literal!".into());
+            }
         }
         Err(_) => None,
     };
@@ -221,13 +276,15 @@ pub fn parse_dbl_range(
     tq.consume_eq(Token::Comma)?;
 
     // consume max
-    let max = match tq
-        .clone()
-        .peek_matching(|token| token.is_double_literal_tok())
-    {
+    let max = match tq.clone().peek_matching(|token| token.is_literal()) {
         Ok(token) => {
             tq.increment();
-            Some(token.get_double_literal()?)
+            let literal = token.get_literal().unwrap();
+            if literal.is_dbl_literal() {
+                Some(literal.get_dbl().unwrap())
+            } else {
+                return Err("Couldn't parse dbl literal!".into());
+            }
         }
         Err(_) => None,
     };
@@ -245,6 +302,83 @@ pub enum ParentType {
     Int(IntRange),
     Str(IntRange),
     Dbl(DblRange),
+    Ident(String),
+}
+
+pub fn parse_parent_type(tq: &TokenQueue<Token>) -> ParseResult<ParentType> {
+    let mut tq = tq.clone();
+
+    let parent_name = tq
+        .consume_matching(|tok| tok.is_ident_or_str_literal_tok())?
+        .get_ident_or_str_literal()
+        .ok_or::<Box<dyn Error>>("Couldn't parse base type name!".into())?
+        .clone();
+
+    match parent_name.to_lowercase().as_str() {
+        "int" | "integer" => {
+            if let Ok((range, end)) = parse_int_range(&tq) {
+                return Ok((ParentType::Int(range), end));
+            }
+            return Ok((
+                ParentType::Int(Range {
+                    min: None,
+                    max: None,
+                }),
+                tq.get_idx(),
+            ));
+        }
+        "str" | "string" | "text" => {
+            if let Ok((range, end)) = parse_int_range(&tq) {
+                return Ok((ParentType::Str(range), end));
+            }
+            return Ok((
+                ParentType::Str(Range {
+                    min: None,
+                    max: None,
+                }),
+                tq.get_idx(),
+            ));
+        }
+        "dbl" | "double" | "float" => {
+            if let Ok((range, end)) = parse_dbl_range(&tq) {
+                return Ok((ParentType::Dbl(range), end));
+            }
+            return Ok((
+                ParentType::Dbl(Range {
+                    min: None,
+                    max: None,
+                }),
+                tq.get_idx(),
+            ));
+        }
+        _ => Ok((ParentType::Ident(parent_name), tq.get_idx())),
+    }
+}
+
+impl Display for ParentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParentType::Int(range) => {
+                if range.min.is_none() && range.max.is_none() {
+                    return write!(f, "int");
+                }
+                write!(f, "int{}", range)
+            }
+            ParentType::Dbl(range) => {
+                if range.min.is_none() && range.max.is_none() {
+                    return write!(f, "dbl");
+                }
+                write!(f, "dbl{}", range)
+            }
+            ParentType::Str(range) => {
+                if range.min.is_none() && range.max.is_none() {
+                    return write!(f, "str");
+                }
+                write!(f, "str{}", range,)
+            }
+            ParentType::Ident(val) => write!(f, "{}", val),
+        }
+    }
 }
 
 /// Derived data types in the applicaiton.
@@ -256,131 +390,37 @@ pub struct DType {
 
 impl Display for DType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.parent {
-            ParentType::Int(range) => {
-                write!(
-                    f,
-                    "int{}{}",
-                    if self.nullable { "?" } else { "" },
-                    range
-                )
-            }
-            ParentType::Dbl(range) => {
-                write!(
-                    f,
-                    "dbl{}{}",
-                    if self.nullable { "?" } else { "" },
-                    range
-                )
-            }
-            ParentType::Str(range) => {
-                write!(
-                    f,
-                    "str{}{}",
-                    if self.nullable { "?" } else { "" },
-                    range
-                )
-            }
-        }
+        write!(f, "{}{}", self.parent, if self.nullable { "?" } else { "" })
     }
 }
 
-pub fn parse_data_type(
+pub fn parse_dtype(
     tq: &TokenQueue<Token>,
 ) -> Result<(DType, usize), Box<dyn Error>> {
     let mut tq = tq.clone();
 
-    let parent_name = tq
-        .consume_matching(|tok| tok.is_ident_or_str_literal_tok())?
-        .get_ident_or_str_literal()
-        .ok_or::<Box<dyn Error>>("Couldn't parse base type name!".into())?
-        .clone();
+    let parent = tq.parse(parse_parent_type)?;
 
     let nullable = tq.consume_eq(Token::QMark).is_ok();
 
-    match parent_name.to_lowercase().as_str() {
-        "int" | "integer" => {
-            if let Ok((range, end)) = parse_int_range(&tq) {
-                return Ok((
-                    DType {
-                        nullable,
-                        parent: ParentType::Int(range),
-                    },
-                    end,
-                ));
-            }
-            return Ok((
-                DType {
-                    nullable,
-                    parent: ParentType::Int(Range {
-                        min: None,
-                        max: None,
-                    }),
-                },
-                tq.get_idx(),
-            ));
-        }
-        "str" | "string" | "text" => {
-            if let Ok((range, end)) = parse_int_range(&tq) {
-                return Ok((
-                    DType {
-                        nullable,
-                        parent: ParentType::Str(range),
-                    },
-                    end,
-                ));
-            }
-            return Ok((
-                DType {
-                    nullable,
-                    parent: ParentType::Str(Range {
-                        min: None,
-                        max: None,
-                    }),
-                },
-                tq.get_idx(),
-            ));
-        }
-        "dbl" | "double" | "float" => {
-            if let Ok((range, end)) = parse_dbl_range(&tq) {
-                return Ok((
-                    DType {
-                        nullable,
-                        parent: ParentType::Dbl(range),
-                    },
-                    end,
-                ));
-            }
-            return Ok((
-                DType {
-                    nullable,
-                    parent: ParentType::Dbl(Range {
-                        min: None,
-                        max: None,
-                    }),
-                },
-                tq.get_idx(),
-            ));
-        }
-        _ => {
-            return Err(format!(
-                "Couldn't parse data type from '{}'!",
-                parent_name
-            )
-            .into());
-        }
-    }
+    Ok((DType { parent, nullable }, tq.get_idx()))
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ColumnSchema {
     column_name: String,
     dtype: DType,
+    default_value: Option<Literal>,
 }
 
 impl Display for ColumnSchema {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.column_name, self.dtype)
+        match &self.default_value {
+            Some(val) => {
+                write!(f, "{}: {} = {}", self.column_name, self.dtype, val)
+            }
+            None => write!(f, "{}: {}", self.column_name, self.dtype),
+        }
     }
 }
 
@@ -397,9 +437,25 @@ pub fn parse_column_schema(
 
     tq.consume_eq(Token::Colon)?;
 
-    let dtype = tq.parse(parse_data_type)?;
+    let dtype = tq.parse(parse_dtype)?;
 
-    Ok((ColumnSchema { column_name, dtype }, tq.get_idx()))
+    let mut default_value = None;
+    if tq.consume_eq(Token::Equals).is_ok() {
+        default_value = Some(
+            tq.consume_matching(|tok| tok.is_literal())?
+                .get_literal()
+                .ok_or("Couldn't get a literal!")?,
+        );
+    }
+
+    Ok((
+        ColumnSchema {
+            column_name,
+            dtype,
+            default_value: default_value.cloned(),
+        },
+        tq.get_idx(),
+    ))
 }
 
 #[derive(Debug, PartialEq)]
@@ -409,37 +465,38 @@ pub struct TableSchema {
 }
 
 pub fn parse_table_schema(tq: &TokenQueue<Token>) -> ParseResult<TableSchema> {
-    let mut tq = tq.clone();
+    let mut tq_mut = tq.clone();
 
     let table_name = tq
-        .consume_matching(|tok| tok.is_ident_or_str_literal_tok())?
+        .peek_matching(|tok| tok.is_ident_or_str_literal_tok())?
         .get_ident_or_str_literal()
         .ok_or("Couldn't get table name!")?;
+    tq_mut.increment();
 
-    tq.consume_eq(Token::OParen)?;
+    tq_mut.consume_eq(Token::OParen)?;
 
     let mut columns = vec![];
 
-    while let Ok(column) = tq.parse(parse_column_schema) {
+    while let Ok(column) = tq_mut.parse(parse_column_schema) {
         columns.push(column);
-        if tq.consume_eq(Token::Comma).is_err() {
+        if tq_mut.consume_eq(Token::Comma).is_err() {
             break;
         }
     }
 
-    tq.consume_eq(Token::CParen)?;
+    tq_mut.consume_eq(Token::CParen)?;
     Ok((
         TableSchema {
-            table_name,
+            table_name: table_name.clone(),
             columns,
         },
-        tq.get_idx(),
+        tq_mut.get_idx(),
     ))
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Stmt {
-    DType(String, DType),
+    ParentType(String, ParentType),
     Table(TableSchema),
 }
 
@@ -454,9 +511,9 @@ pub fn parse_stmt(tq: &TokenQueue<Token>) -> ParseResult<Stmt> {
                 .ok_or::<Box<dyn Error>>("Couldn't get type name!".into())?
                 .clone();
 
-            let (dtype, end) = parse_data_type(&tq)?;
+            let (parent_type, end) = parse_parent_type(&tq)?;
             // tq.consume_eq(Token::)
-            Ok((Stmt::DType(type_name.into(), dtype), end))
+            Ok((Stmt::ParentType(type_name.into(), parent_type), end))
         }
         Ok(Token::TableKwd) => {
             let (table_schema, end) = parse_table_schema(&tq)?;
@@ -512,7 +569,7 @@ mod tests {
     }
 
     fn maps_to_data_type(s: &str) -> Result<bool, Box<dyn Error>> {
-        let out = parse_data_type(&lex(&s)?)?.0.to_string();
+        let out = parse_dtype(&lex(&s)?)?.0.to_string();
         Ok(out == s)
     }
 
@@ -543,12 +600,12 @@ mod tests {
 
     #[test]
     fn data_type_test() -> Result<(), Box<dyn Error>> {
-        assert!(maps_to_data_type("int?<5,10>")?);
         assert!(maps_to_data_type("int<5,10>")?);
+        assert!(maps_to_data_type("int<5,10>?")?);
         assert!(maps_to_data_type("str<5,10>")?);
-        assert!(maps_to_data_type("str?<5,10>")?);
-        assert!(maps_to_data_type("dbl?<5.4,10.3>")?);
-        assert!(maps_to_data_type("dbl<5,10>")?);
+        assert!(maps_to_data_type("str<5,10>?")?);
+        assert!(maps_to_data_type("dbl<5.4,10.3>")?);
+        assert!(maps_to_data_type("dbl<5,10>?")?);
         Ok(())
     }
 
@@ -556,6 +613,7 @@ mod tests {
     fn column_schema_test() -> Result<(), Box<dyn Error>> {
         assert!(maps_to_column_schema("abc: int<5,5>")?);
         assert!(maps_to_column_schema("\"My column\": int<5,5>")?);
+        assert!(maps_to_column_schema("\"My optional column\": int<5,5>?")?);
 
         Ok(())
     }
@@ -566,20 +624,18 @@ mod tests {
         let (stmt, _) = parse_stmt(&TokenQueue::new(tokens))?;
 
         assert!(
-            stmt == Stmt::DType(
+            stmt == Stmt::ParentType(
                 "i1to5".into(),
-                DType {
-                    parent: ParentType::Int(Range {
-                        min: Some(1),
-                        max: Some(5)
-                    }),
-                    nullable: false
-                }
+                ParentType::Int(Range {
+                    min: Some(1),
+                    max: Some(5)
+                })
             )
         );
 
-        let tokens = setup_lexer().lex("table Table1(a:int,b:dbl,c:str)")?;
-        let (_, _) = parse_stmt(&TokenQueue::new(tokens))?;
+        let tokens =
+            setup_lexer().lex("table Table1(a: int?, b: dbl?, c:str?)")?;
+        assert!(parse_stmt(&TokenQueue::new(tokens)).is_ok());
 
         Ok(())
     }
@@ -590,7 +646,7 @@ mod tests {
         let str_lit = "\"helloWorld\"";
 
         let ident_tok = Token::Ident(ident.into());
-        let str_lit_tok = Token::StrLiteral(str_lit.into());
+        let str_lit_tok = Token::Literal(Literal::Str(str_lit.into()));
         assert!(
             ident_tok.is_ident_or_str_literal_tok()
                 && ident_tok
@@ -614,7 +670,7 @@ mod tests {
             col1: int<1, 5>, 
             col2: dbl<1, 5>, 
             col3: str<5, 10>,
-            col4: int?<1, 6>
+            col4: int<1, 6>?
         )")?;
 
         let table = tq.parse(parse_table_schema)?;
@@ -632,7 +688,8 @@ mod tests {
                                     max: Some(5)
                                 }),
                                 nullable: false
-                            }
+                            },
+                            default_value: None
                         },
                         ColumnSchema {
                             column_name: "col2".into(),
@@ -642,7 +699,8 @@ mod tests {
                                     max: Some(5.0)
                                 }),
                                 nullable: false
-                            }
+                            },
+                            default_value: None
                         },
                         ColumnSchema {
                             column_name: "col3".into(),
@@ -652,7 +710,8 @@ mod tests {
                                     max: Some(10)
                                 }),
                                 nullable: false
-                            }
+                            },
+                            default_value: None
                         },
                         ColumnSchema {
                             column_name: "col4".into(),
@@ -662,7 +721,8 @@ mod tests {
                                     max: Some(6)
                                 }),
                                 nullable: true
-                            }
+                            },
+                            default_value: None
                         }
                     ]
                 }
@@ -674,11 +734,27 @@ mod tests {
     #[test]
     fn parse_prgm_test() -> Result<(), Box<dyn Error>> {
         let tq = lex("
-        table Table1(a: int, b: dbl, c: str, d: int?);
-        table Table2(a: int, b: dbl, c: str, d: int?);
+        type MyType int<1,5>;
+
+        table Table1(a: MyType, b: dbl, c: str, d: int?);
+        table Table2(a: MyType? = 5, b: dbl = 2.5, c: str = \"\", d: int?);
         ")?;
 
-        parse_prgm(&tq)?;
+        let (prgm, _) = parse_prgm(&tq)?;
+
+        if let Stmt::Table(table) = &prgm.stmts[2] {
+            assert!(table.columns[0].column_name == "a");
+            assert!(
+                table.columns[0].dtype
+                    == DType {
+                        parent: ParentType::Ident("MyType".into()),
+                        nullable: true
+                    }
+            );
+            assert!(table.columns[0].default_value == Some(Literal::Int(5)));
+        } else {
+            return Err("Didn't correctly parse Table2 definition!".into());
+        }
 
         Ok(())
     }
