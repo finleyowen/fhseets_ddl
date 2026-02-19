@@ -1,8 +1,11 @@
 use std::fmt::Display;
 
-use crate::core::schema::{
-    ColumnSchema, DblDataType, IntDataType, SpreadsheetSchema, StrDataType,
-    TableSchema,
+use crate::{
+    core::schema::{
+        ColumnSchema, DBL_TYPE_NAME, DblDataType, INT_TYPE_NAME, IntDataType,
+        STR_TYPE_NAME, SpreadsheetSchema, StrDataType, TableSchema,
+    },
+    ql::Stmt,
 };
 
 impl Display for IntDataType {
@@ -19,7 +22,8 @@ impl Display for IntDataType {
 
         write!(
             f,
-            "<{}, {}>{}",
+            "{}<{}, {}>{}",
+            INT_TYPE_NAME,
             min,
             max,
             if self.nullable { "?" } else { "" }
@@ -41,7 +45,8 @@ impl Display for DblDataType {
 
         write!(
             f,
-            "<{}, {}>{}",
+            "{}<{}, {}>{}",
+            DBL_TYPE_NAME,
             min,
             max,
             if self.nullable { "?" } else { "" }
@@ -63,7 +68,8 @@ impl Display for StrDataType {
 
         write!(
             f,
-            "<{}, {}>{}",
+            "{}<{}, {}>{}",
+            STR_TYPE_NAME,
             min,
             max,
             if self.nullable { "?" } else { "" }
@@ -83,15 +89,26 @@ impl Display for TableSchema {
             self.columns.iter().map(|col| col.to_string()).collect();
         let columns_str = column_strs.join(", ");
 
-        write!(f, "{}({})", self.table_name, columns_str)
+        write!(f, "{} ({})", self.table_name, columns_str)
     }
 }
 
 impl Display for SpreadsheetSchema {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for table in &self.tables {
-            write!(f, "table {};", table)?;
+            writeln!(f, "table {};", table)?;
         }
         Ok(())
+    }
+}
+
+impl Display for Stmt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TableSchema(schema) => write!(f, "table {schema};",),
+            Self::TypeDef(type_name, data_type) => {
+                write!(f, "type {type_name} {data_type};")
+            }
+        }
     }
 }

@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::core::ql::{Stmt, Symbol, SymbolTable, lex::Token};
 use crate::core::schema::{
     ColumnSchema, DBL_TYPE_NAME, DataType, DblDataType, INT_TYPE_NAME,
     IntDataType, STR_TYPE_NAME, SpreadsheetSchema, StrDataType, TableSchema,
 };
+use crate::ql::{Stmt, Symbol, SymbolTable, lex::Token};
 use rlrl::parse::{ParseResult, TokenQueue};
 pub trait Parse: Sized {
     fn parse(
@@ -21,39 +22,49 @@ impl Parse for IntDataType {
         // create a mutable copy
         let mut tq = tq.clone();
 
-        tq.consume_eq(Token::OAngle)?;
-
-        // consume min
-        let min = match tq.clone().peek_matching(|token| token.is_literal()) {
-            Ok(token) => {
-                tq.increment();
-                let literal = token.get_literal().unwrap();
-                if literal.is_i32() {
-                    Some(literal.get_i32().unwrap())
-                } else {
-                    return Err(anyhow::anyhow!("Couldn't parse int literal!"));
+        let (min, max) = if tq.consume_eq(Token::OAngle).is_err() {
+            (None, None)
+        } else {
+            // consume min
+            let min = match tq.clone().peek_matching(|token| token.is_literal())
+            {
+                Ok(token) => {
+                    tq.increment()?;
+                    let literal = token.get_literal().unwrap();
+                    if literal.is_i32() {
+                        Some(literal.get_i32().unwrap())
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Couldn't parse int literal!"
+                        ));
+                    }
                 }
-            }
-            Err(_) => None,
-        };
+                Err(_) => None,
+            };
 
-        tq.consume_eq(Token::Comma)?;
+            tq.consume_eq(Token::Comma)?;
 
-        // consume max
-        let max = match tq.clone().peek_matching(|token| token.is_literal()) {
-            Ok(token) => {
-                tq.increment();
-                let literal = token.get_literal().unwrap();
-                if literal.is_i32() {
-                    Some(literal.get_i32().unwrap())
-                } else {
-                    return Err(anyhow::anyhow!("Couldn't parse int literal!"));
+            // consume max
+            let max = match tq.clone().peek_matching(|token| token.is_literal())
+            {
+                Ok(token) => {
+                    tq.increment()?;
+                    let literal = token.get_literal().unwrap();
+                    if literal.is_i32() {
+                        Some(literal.get_i32().unwrap())
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Couldn't parse int literal!"
+                        ));
+                    }
                 }
-            }
-            Err(_) => None,
-        };
+                Err(_) => None,
+            };
 
-        tq.consume_eq(Token::CAngle)?;
+            tq.consume_eq(Token::CAngle)?;
+
+            (min, max)
+        };
 
         // consume ?
         let nullable = tq.consume_eq(Token::QMark).is_ok();
@@ -71,39 +82,48 @@ impl Parse for DblDataType {
         // create a mutable copy
         let mut tq = tq.clone();
 
-        tq.consume_eq(Token::OAngle)?;
-
-        // consume min
-        let min = match tq.clone().peek_matching(|token| token.is_literal()) {
-            Ok(token) => {
-                tq.increment();
-                let literal = token.get_literal().unwrap();
-                if literal.is_i32() {
-                    Some(literal.get_f64().unwrap())
-                } else {
-                    return Err(anyhow::anyhow!("Couldn't parse int literal!"));
+        let (min, max) = if tq.consume_eq(Token::OAngle).is_err() {
+            (None, None)
+        } else {
+            let min = match tq.clone().peek_matching(|token| token.is_literal())
+            {
+                Ok(token) => {
+                    tq.increment()?;
+                    let literal = token.get_literal().unwrap();
+                    if literal.is_f64() {
+                        Some(literal.get_f64().unwrap())
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Couldn't parse dbl literal!"
+                        ));
+                    }
                 }
-            }
-            Err(_) => None,
-        };
+                Err(_) => None,
+            };
 
-        tq.consume_eq(Token::Comma)?;
+            tq.consume_eq(Token::Comma)?;
 
-        // consume max
-        let max = match tq.clone().peek_matching(|token| token.is_literal()) {
-            Ok(token) => {
-                tq.increment();
-                let literal = token.get_literal().unwrap();
-                if literal.is_i32() {
-                    Some(literal.get_f64().unwrap())
-                } else {
-                    return Err(anyhow::anyhow!("Couldn't parse int literal!"));
+            // consume max
+            let max = match tq.clone().peek_matching(|token| token.is_literal())
+            {
+                Ok(token) => {
+                    tq.increment()?;
+                    let literal = token.get_literal().unwrap();
+                    if literal.is_f64() {
+                        Some(literal.get_f64().unwrap())
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Couldn't parse dbl literal!"
+                        ));
+                    }
                 }
-            }
-            Err(_) => None,
-        };
+                Err(_) => None,
+            };
 
-        tq.consume_eq(Token::CAngle)?;
+            tq.consume_eq(Token::CAngle)?;
+
+            (min, max)
+        };
 
         // consume ?
         let nullable = tq.consume_eq(Token::QMark).is_ok();
@@ -121,39 +141,51 @@ impl Parse for StrDataType {
         // create a mutable copy
         let mut tq = tq.clone();
 
-        tq.consume_eq(Token::OAngle)?;
-
-        // consume min
-        let min = match tq.clone().peek_matching(|token| token.is_literal()) {
-            Ok(token) => {
-                tq.increment();
-                let literal = token.get_literal().unwrap();
-                if literal.is_i32() {
-                    Some(literal.get_i32().unwrap().try_into()?)
-                } else {
-                    return Err(anyhow::anyhow!("Couldn't parse int literal!"));
+        let (min, max) = if tq.consume_eq(Token::OAngle).is_err() {
+            (None, None)
+        } else {
+            // consume min
+            let min = match tq.clone().peek_matching(|token| token.is_literal())
+            {
+                Ok(token) => {
+                    tq.increment()?;
+                    let literal = token.get_literal().unwrap();
+                    Some(
+                        literal
+                            .get_i32()
+                            .ok_or(anyhow::anyhow!(
+                                "Couldn't get size literal!"
+                            ))?
+                            .try_into()?,
+                    )
                 }
-            }
-            Err(_) => None,
-        };
+                Err(_) => None,
+            };
 
-        tq.consume_eq(Token::Comma)?;
+            tq.consume_eq(Token::Comma)?;
 
-        // consume max
-        let max = match tq.clone().peek_matching(|token| token.is_literal()) {
-            Ok(token) => {
-                tq.increment();
-                let literal = token.get_literal().unwrap();
-                if literal.is_i32() {
-                    Some(literal.get_i32().unwrap().try_into()?)
-                } else {
-                    return Err(anyhow::anyhow!("Couldn't parse int literal!"));
+            // consume max
+            let max = match tq.clone().peek_matching(|token| token.is_literal())
+            {
+                Ok(token) => {
+                    tq.increment()?;
+                    let literal = token.get_literal().unwrap();
+                    Some(
+                        literal
+                            .get_i32()
+                            .ok_or(anyhow::anyhow!(
+                                "Couldn't get size literal!"
+                            ))?
+                            .try_into()?,
+                    )
                 }
-            }
-            Err(_) => None,
-        };
+                Err(_) => None,
+            };
 
-        tq.consume_eq(Token::CAngle)?;
+            tq.consume_eq(Token::CAngle)?;
+
+            (min, max)
+        };
 
         // consume ?
         let nullable = tq.consume_eq(Token::QMark).is_ok();
@@ -227,29 +259,30 @@ impl Parse for TableSchema {
         tq: &TokenQueue<Token>,
         symtable: &mut SymbolTable,
     ) -> ParseResult<Self> {
-        let mut tq_mut = tq.clone();
+        let mut tq = tq.clone();
 
         let table_name = tq
-            .peek_matching(|tok| tok.is_ident_or_str_literal_tok())?
+            .consume()?
             .get_ident_or_str_literal()
             .ok_or(anyhow::anyhow!("Couldn't get table name!"))?;
-        tq_mut.increment();
 
-        tq_mut.consume_eq(Token::OParen)?;
+        tq.consume_eq(Token::OParen)
+            .map_err(|_| anyhow::anyhow!("Couldn't get '('"))?;
 
         let mut columns = vec![];
 
-        while let Ok(column) =
-            tq_mut.parse_with_mut(ColumnSchema::parse, symtable)
+        while let Ok(column) = tq.parse_with_mut(ColumnSchema::parse, symtable)
         {
             columns.push(column);
-            if tq_mut.consume_eq(Token::Comma).is_err() {
+            if tq.consume_eq(Token::Comma).is_err() {
                 break;
             }
         }
 
-        tq_mut.consume_eq(Token::CParen)?;
-        Ok((TableSchema::new(table_name, columns), tq_mut.get_idx()))
+        tq.consume_eq(Token::CParen)
+            .map_err(|_| anyhow::anyhow!("Couldn't get ')'"))?;
+
+        Ok((TableSchema::new(table_name, columns), tq.get_idx()))
     }
 }
 
@@ -295,7 +328,6 @@ impl Parse for Stmt {
                         &table_schema.get_name().clone()
                     ));
                 }
-
                 Ok((Stmt::TableSchema(table_schema), tq.get_idx()))
             }
             Ok(_) => Err(anyhow::anyhow!("Couldn't parse statement!")),
@@ -312,17 +344,29 @@ impl Parse for SpreadsheetSchema {
         let mut tq: TokenQueue<Token> = tq.clone();
         let mut tables = vec![];
         while let Ok(stmt) = tq.parse_with_mut(Stmt::parse, symtable) {
-            tq.consume_eq(Token::Semicolon)?;
-            // tables.push(stmt);
-
             match stmt {
-                Stmt::TableSchema(schema) => tables.push(schema),
-                _ => {}
+                Stmt::TableSchema(schema) => {
+                    tables.push(schema);
+                }
+                Stmt::TypeDef(_, _) => {}
             }
+            tq.consume_eq(Token::Semicolon)?;
         }
         Ok((
             SpreadsheetSchema::new("ss_name".into(), tables),
             tq.get_idx(),
         ))
     }
+}
+
+pub fn parse_spreadsheet_schema(
+    tq: &TokenQueue<Token>,
+) -> anyhow::Result<SpreadsheetSchema> {
+    let mut tq = tq.clone();
+    let mut symtable = HashMap::new();
+    let schema = tq.parse_with_mut(SpreadsheetSchema::parse, &mut symtable)?;
+    if !tq.is_consumed() {
+        return Err(anyhow::anyhow!("Schema ended prematurely."));
+    }
+    Ok(schema)
 }

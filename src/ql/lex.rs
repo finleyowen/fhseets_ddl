@@ -2,7 +2,7 @@ use rlrl::lex::*;
 use std::rc::Rc;
 
 /// A literal in the query language.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     Int(i32),
     Dbl(f64),
@@ -17,7 +17,7 @@ impl Literal {
         }
     }
 
-    /// Clones the string value if `self` is a `Literal::Str`, otherwise
+    /// Clones the pointer to the string value if `self` is a `Literal::Str`,
     /// returns `None`.
     pub fn get_str(&self) -> Option<Rc<str>> {
         match self {
@@ -61,7 +61,7 @@ impl Literal {
 }
 
 /// Enum representing the tokens available to the lexer.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Token {
     // chars
     OParen,
@@ -125,11 +125,10 @@ pub fn setup_lexer() -> Lexer<Token> {
     let mut lexer: Lexer<Token> = Lexer::new();
 
     // comments
-    lexer.add_rule(r"//.*\n", |_| LexResult::Ignore);
-    lexer.add_rule(r"/\*[^(\*/)]+\*/", |_| LexResult::Ignore);
+    lexer.add_rule(r"//[^\n\r]*", |_| LexResult::Ignore);
 
     // whitespace
-    lexer.add_rule(r"[\s\n\t]+", |_| LexResult::Ignore);
+    lexer.add_rule(r"[\s]+", |_| LexResult::Ignore);
 
     // chars
     lexer.add_rule(r"\(", |_| LexResult::Token(Token::OParen));
@@ -165,15 +164,9 @@ pub fn setup_lexer() -> Lexer<Token> {
         }
     });
     lexer.add_rule("\"[^\"]*\"", |re_match| {
-        LexResult::Token(Token::Literal(Literal::Str(re_match.as_str().into())))
-    });
-
-    lexer.add_rule(".", |re_match| {
-        dbg!(re_match.as_str(), re_match.start());
-        LexResult::Error(anyhow::anyhow!(
-            "Unmatched input at position {}",
-            re_match.start()
-        ))
+        LexResult::Token(Token::Literal(Literal::Str(
+            re_match.as_str()[1..re_match.len() - 1].into(),
+        )))
     });
 
     lexer

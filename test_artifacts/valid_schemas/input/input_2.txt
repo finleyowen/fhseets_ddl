@@ -1,0 +1,4 @@
+type uIntType int<0, >;
+type userNameType str<2, 32>;
+
+table Users (userId: uIntType, userName: userNameType, bio: str?);

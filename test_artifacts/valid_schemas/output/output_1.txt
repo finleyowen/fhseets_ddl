@@ -1,0 +1,1 @@
+table Users (userId: int<0, >, userName: str<2, 32>, bio: str<, >?);
