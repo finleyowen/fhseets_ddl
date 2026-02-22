@@ -153,6 +153,7 @@ pub fn setup_lexer() -> Lexer<Token> {
 
     // kwds
     lexer.add_rule(r"type", |_| LexResult::Token(Token::TypeKwd));
+    lexer.add_rule(r"tab", |_| LexResult::Token(Token::TableKwd));
     lexer.add_rule(r"table", |_| LexResult::Token(Token::TableKwd));
 
     // idents

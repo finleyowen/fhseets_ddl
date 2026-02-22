@@ -9,7 +9,7 @@ use crate::{
 use rlrl::parse::TokenQueue;
 use std::{collections::HashMap, fs};
 
-const NUM_VALID_TEST_SCHEMA: usize = 3;
+const NUM_VALID_TEST_SCHEMA: usize = 4;
 const NUM_INVALID_TEST_SCHEMA: usize = 5;
 
 fn lex_file(path: &str) -> anyhow::Result<TokenQueue<Token>> {
@@ -138,20 +138,6 @@ table T2 (b: int<, >);",
     Ok(())
 }
 
-fn different_at(s1: &str, s2: &str) -> Option<usize> {
-    s1.chars()
-        .zip(s2.chars())
-        .position(|(c1, c2)| c1 != c2)
-        .or_else(|| {
-            // if one string is longer, difference is at its length
-            if s1.len() != s2.len() {
-                Some(s1.chars().zip(s2.chars()).count())
-            } else {
-                None
-            }
-        })
-}
-
 #[test]
 fn test_ddl_3() -> anyhow::Result<()> {
     // test the program parses more complex schemas without throwing errors
@@ -171,19 +157,7 @@ fn test_ddl_3() -> anyhow::Result<()> {
         let expected = expected.trim();
         let actual = actual.trim();
 
-        assert!(
-            actual == expected,
-            "Expected:
-        
-{expected}
-
-Got:
-
-{actual}
-
-Different at: {}",
-            different_at(actual, expected).unwrap()
-        );
+        assert!(actual == expected,);
     }
     Ok(())
 }

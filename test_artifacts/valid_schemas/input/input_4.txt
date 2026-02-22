@@ -1,0 +1,13 @@
+// test the program's ability to handle multiple tables and type definitions
+type uIntType int<0, >;
+type userNameType str<2, 32>;
+type ratingType dbl<0.0, 5.0>;
+
+tab Users (userId: uIntType, userName: userNameType, bio: str?);
+tab Movies(movieId: uIntType, movieName: str, yearReleased: uIntType);
+tab MovieRatings(
+	movieId: uIntType, 
+	userId: uIntType, 
+	rating: ratingType, 
+	review: str?
+);
