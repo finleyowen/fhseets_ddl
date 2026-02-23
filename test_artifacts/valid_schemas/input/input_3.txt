@@ -1,4 +1,8 @@
-// test the program's ability to handle multiple tables and type definitions
+/*
+FTables Valid Schema Example 2
+
+Test the program's ability to handle multiple tables and type definitions.
+*/
 type uIntType int<0, >;
 type userNameType str<2, 32>;
 type ratingType dbl<0.0, 5.0>;

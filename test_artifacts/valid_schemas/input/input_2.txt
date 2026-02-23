@@ -1,3 +1,7 @@
+/*
+FTables Valid Schema Example 2
+*/
+
 // define type aliases to help maintain consistency across tables
 type uIntType int<0, >;
 type userNameType str<2, 32>;

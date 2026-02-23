@@ -13,13 +13,9 @@ const NUM_VALID_TEST_SCHEMA: usize = 4;
 const NUM_INVALID_TEST_SCHEMA: usize = 5;
 
 fn lex_file(path: &str) -> anyhow::Result<TokenQueue<Token>> {
-    let s = fs::read_to_string(path)?;
-    let mut tokens = vec![];
+    let s = fs::read_to_string(path)?.replace("\r", "");
     let lexer = setup_lexer();
-
-    for line in s.lines() {
-        tokens.extend_from_slice(&lexer.lex(line)?);
-    }
+    let tokens = lexer.lex(&s)?;
 
     Ok(TokenQueue::from(tokens))
 }

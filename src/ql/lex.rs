@@ -136,6 +136,7 @@ pub fn setup_lexer() -> Lexer<Token> {
 
     // comments
     lexer.add_rule(r"//[^\n\r]*", |_| LexResult::Ignore);
+    lexer.add_rule(r"/\*[^*]*\*/", |_| LexResult::Ignore);
 
     // whitespace
     lexer.add_rule(r"[\s]+", |_| LexResult::Ignore);

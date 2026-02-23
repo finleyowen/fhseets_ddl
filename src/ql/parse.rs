@@ -366,7 +366,7 @@ impl Parse for SpreadsheetSchema {
             tq.consume_eq(Token::Semicolon)?;
         }
         Ok((
-            SpreadsheetSchema::new("ss_name".into(), tables),
+            SpreadsheetSchema::new("FTables Spreadsheet".into(), tables),
             tq.get_idx(),
         ))
     }

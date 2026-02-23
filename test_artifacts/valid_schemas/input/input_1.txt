@@ -1,4 +1,6 @@
-// FTables Valid Schema Example 1
+/*
+FTables Valid Schema Example 1
+*/
 
 table Users (
 	// mandatory int in range [0, i32::MAX]
